@@ -39,6 +39,9 @@ dependencies:
   pdf: ^3.10.0
   path: ^1.8.3
   sqflite: ^2.2.8
+  window_size: ^0.1.0
+  excel: ^2.0.1
+  url_launcher: ^6.2.0
 
 dev_dependencies:
   flutter_test:
@@ -48,8 +51,8 @@ dev_dependencies:
 
 flutter_launcher_icons:
   android: true
-  ios: true
-  image_path: "assets/images/billing 1.png"
+  ios: false
+  image_path: "assets/images/billlagbe.png"
   windows:
     generate: true
     icon_size: 48
@@ -74,7 +77,7 @@ flutter:
 
   # To add assets to your application, add an assets section, like this:
   assets:
-    - assets/images/
+    - assets/images/billlagbe.png
   #   - images/a_dot_ham.jpeg
 
   # An image asset can refer to one or more resolution-specific "variants", see

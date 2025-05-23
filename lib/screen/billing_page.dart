@@ -2,10 +2,13 @@ import 'dart:convert';
 import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:flutter/foundation.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:printing/printing.dart';
 import 'package:pdf/pdf.dart' show PdfPageFormat;
 import 'package:pdf/widgets.dart' as pw;
+import 'package:excel/excel.dart' as ex;
+import 'package:url_launcher/url_launcher.dart';
 
 class Product {
   String name;
@@ -95,7 +98,6 @@ class _BillingPageState extends State<BillingPage> {
   final searchCtrl = TextEditingController();
   String searchQuery = '';
 
-  // Controllers for adding/editing products
   final productNameCtrl = TextEditingController();
   final productDescCtrl = TextEditingController();
   final productPriceCtrl = TextEditingController();
@@ -160,6 +162,12 @@ class _BillingPageState extends State<BillingPage> {
           billHistory = (historyData as List)
               .map((item) => BillRecord.fromMap(item))
               .toList();
+          if (billHistory.isNotEmpty) {
+            int maxBillNo = billHistory
+                .map((bill) => int.tryParse(bill.billNo) ?? 0)
+                .reduce((a, b) => a > b ? a : b);
+            billNumber = maxBillNo + 1;
+          }
         });
       }
     } catch (e) {
@@ -170,6 +178,8 @@ class _BillingPageState extends State<BillingPage> {
   void handleQuantityChange(int index, int newQty) {
     final product = filteredProducts[index];
     final originalIndex = products.indexWhere((p) => p.name == product.name);
+
+    if (newQty < 0) return;
 
     int diff = newQty - product.quantity;
 
@@ -211,25 +221,31 @@ class _BillingPageState extends State<BillingPage> {
 
     String currentBillNo = billNumber.toString().padLeft(4, '0');
 
-    buffer.writeln("Welcome To RAFSAN Store's");
-    buffer.writeln("Bill No: $currentBillNo");
-    buffer.writeln("Customer: ${nameCtrl.text}");
-    buffer.writeln("Phone: ${phoneCtrl.text}");
-    buffer.writeln("Date: ${DateTime.now().toString()}");
-    buffer.writeln("=====================================");
-    buffer.writeln("Product\t\tQty\tPrice\tTotal");
-    buffer.writeln("-------------------------------------");
+    buffer.writeln("===========================");
+    buffer.writeln("       WELCOME TO RAFSAN STORE       ");
+    buffer.writeln("===========================");
+    buffer.writeln("               Bill No: $currentBillNo");
+    buffer.writeln("               Customer: ${nameCtrl.text}");
+    buffer.writeln("               Phone: ${phoneCtrl.text}");
+    buffer.writeln("               Date: ${DateTime.now().toString().substring(0, 16)}");
+    buffer.writeln("----------------------------------------------");
 
     for (var product in products) {
       if (product.quantity > 0) {
         double productTotal = product.price * product.quantity;
         total += productTotal;
-        buffer.writeln("${product.name}\t${product.quantity}\t${product.price.toStringAsFixed(2)}\t${productTotal.toStringAsFixed(2)}");
+
+        buffer.writeln("               Product: ${product.name}");
+        buffer.writeln("               Qty: ${product.quantity} x ${product.price.toStringAsFixed(2)}");
+        buffer.writeln("               Total: ${productTotal.toStringAsFixed(2)}");
+        buffer.writeln("-----------------------------------------------");
       }
     }
 
-    buffer.writeln("-------------------------------------");
-    buffer.writeln("Total\t\t\t\t${total.toStringAsFixed(2)}");
+    buffer.writeln("               TOTAL: ${total.toStringAsFixed(2)} BDT");
+    buffer.writeln("============================");
+    buffer.writeln("        THANK YOU, COME AGAIN!       ");
+    buffer.writeln("============================");
 
     setState(() {
       billText = buffer.toString();
@@ -279,6 +295,79 @@ class _BillingPageState extends State<BillingPage> {
       return pw.Text(billText, style: pw.TextStyle(font: pw.Font.courier(), fontSize: 12));
     }));
     await Printing.layoutPdf(onLayout: (PdfPageFormat format) async => pdf.save());
+  }
+
+  Future<void> exportToExcel() async {
+    if (billHistory.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('No bills in history to export')),
+      );
+      return;
+    }
+
+    try {
+      final excel = ex.Excel.createExcel();
+      final sheet = excel['Bills'];
+
+      sheet.appendRow([
+        'Bill No',
+        'Customer Name',
+        'Phone',
+        'Date',
+        'Total (BDT)',
+        'Bill Details'
+      ]);
+
+      for (final bill in billHistory) {
+        sheet.appendRow([
+          bill.billNo,
+          bill.customerName,
+          bill.phone,
+          bill.date.toString().substring(0, 16),
+          bill.total.toStringAsFixed(2),
+          bill.billText.replaceAll('\n', ' | ')
+        ]);
+      }
+
+      final dir = await getApplicationDocumentsDirectory();
+      final filePath = '${dir.path}/bill_history_${DateTime.now().millisecondsSinceEpoch}.xlsx';
+      final file = File(filePath);
+      await file.writeAsBytes(excel.encode()!);
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Exported to Excel: $filePath')),
+      );
+    } catch (e) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Error exporting to Excel: $e')),
+      );
+    }
+  }
+
+  Future<void> exportSingleBillToExcel(BillRecord bill) async {
+    try {
+      final excel = ex.Excel.createExcel();
+      final sheet = excel['Bill ${bill.billNo}'];
+
+      sheet.appendRow(['Bill Details']);
+
+      for (var line in bill.billText.split('\n')) {
+        sheet.appendRow([line]);
+      }
+
+      final dir = await getApplicationDocumentsDirectory();
+      final filePath = '${dir.path}/bill_${bill.billNo}_${DateTime.now().millisecondsSinceEpoch}.xlsx';
+      final file = File(filePath);
+      await file.writeAsBytes(excel.encode()!);
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Exported to Excel: $filePath')),
+      );
+    } catch (e) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Error exporting to Excel: $e')),
+      );
+    }
   }
 
   void showAddEditProductDialog() {
@@ -413,6 +502,14 @@ class _BillingPageState extends State<BillingPage> {
             onPressed: () => Navigator.pop(context),
             child: Text("Close"),
           ),
+          if (billHistory.isNotEmpty)
+            TextButton(
+              onPressed: () {
+                Navigator.pop(context);
+                exportToExcel();
+              },
+              child: Text("Export All to Excel"),
+            ),
         ],
       ),
     );
@@ -438,6 +535,120 @@ class _BillingPageState extends State<BillingPage> {
             },
             child: Text("Copy"),
           ),
+          TextButton(
+            onPressed: () {
+              Navigator.pop(context);
+              exportSingleBillToExcel(bill);
+            },
+            child: Text("Export to Excel"),
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _showAboutDialog() {
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Text("About BillLagbe"),
+        content: SingleChildScrollView(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Text("Version: 1.0.0", style: TextStyle(fontWeight: FontWeight.bold)),
+              SizedBox(height: 10),
+              Text("How to use this app:", style: TextStyle(fontWeight: FontWeight.bold)),
+              SizedBox(height: 5),
+              Text("1. Enter customer details (Name & Phone)"),
+              Text("2. Select products from the list"),
+              Text("3. Set quantities using +/- buttons"),
+              Text("4. Click Generate Bill to create invoice"),
+              Text("5. Save/Print the bill for records"),
+              SizedBox(height: 10),
+              Text("Features:", style: TextStyle(fontWeight: FontWeight.bold)),
+              SizedBox(height: 5),
+              Text("- Product management (Add/Edit/Delete)"),
+              Text("- Bill history tracking"),
+              Text("- Export to Excel/PDF"),
+              Text("- Direct printing support"),
+              SizedBox(height: 10),
+              Text("Developed for small businesses", style: TextStyle(fontStyle: FontStyle.italic)),
+            ],
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: Text("Close"),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _launchPortfolio() async {
+    const url = 'https://rafsan-theta.vercel.app/';
+    try {
+      if (defaultTargetPlatform == TargetPlatform.windows) {
+        await Process.run('start', [url], runInShell: true);
+      } else if (await canLaunchUrl(Uri.parse(url))) {
+        await launchUrl(
+          Uri.parse(url),
+          mode: LaunchMode.externalApplication,
+        );
+      } else {
+        throw 'Could not launch $url';
+      }
+    } catch (e) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Error: $e')),
+      );
+    }
+  }
+
+  void _showDeveloperDialog() {
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Text("Developer Information"),
+        content: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text("Developed By:", style: TextStyle(fontWeight: FontWeight.bold)),
+              SizedBox(height: 10),
+              Text("MD.RAFSAN ZANI"),
+              Text("Email: rafsanzanirizon539@gmail.com"),
+              Text("Phone: +8801308078535"),
+              SizedBox(height: 10),
+              Text("Portfolio:", style: TextStyle(fontWeight: FontWeight.bold)),
+              GestureDetector(
+                onTap: _launchPortfolio,
+                child: Text(
+                  'View My Portfolio',
+                  style: TextStyle(
+                    color: Colors.blue,
+                    decoration: TextDecoration.underline,
+                  ),
+                ),
+              ),
+              SizedBox(height: 10),
+              Text("Technology Used:", style: TextStyle(fontWeight: FontWeight.bold)),
+              Text("Flutter Framework"),
+              Text("Dart Programming Language"),
+              SizedBox(height: 10),
+              Text("All rights reserved © ${DateTime.now().year}"),
+            ],
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: Text("Close"),
+          ),
         ],
       ),
     );
@@ -447,7 +658,7 @@ class _BillingPageState extends State<BillingPage> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: Text("Grocery Billing System", style: TextStyle(fontWeight: FontWeight.bold)),
+        title: Text("Bill Lagbe", style: TextStyle(fontWeight: FontWeight.bold)),
         actions: [
           IconButton(icon: Icon(Icons.history), onPressed: showBillHistory),
           IconButton(
@@ -457,12 +668,43 @@ class _BillingPageState extends State<BillingPage> {
               showAddEditProductDialog();
             },
           ),
+          PopupMenuButton<String>(
+            icon: Icon(Icons.more_vert),
+            onSelected: (value) {
+              if (value == 'about') {
+                _showAboutDialog();
+              } else if (value == 'developer') {
+                _showDeveloperDialog();
+              }
+            },
+            itemBuilder: (BuildContext context) => [
+              PopupMenuItem<String>(
+                value: 'about',
+                child: Row(
+                  children: [
+                    Icon(Icons.info_outline, color: Colors.blue),
+                    SizedBox(width: 8),
+                    Text('About'),
+                  ],
+                ),
+              ),
+              PopupMenuItem<String>(
+                value: 'developer',
+                child: Row(
+                  children: [
+                    Icon(Icons.code, color: Colors.green),
+                    SizedBox(width: 8),
+                    Text('Developer'),
+                  ],
+                ),
+              ),
+            ],
+          ),
         ],
       ),
       body: Padding(
         padding: const EdgeInsets.all(12.0),
         child: Column(children: [
-          // PERFECTLY ALIGNED INPUT FIELDS
           Row(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
@@ -496,6 +738,9 @@ class _BillingPageState extends State<BillingPage> {
                       keyboardType: TextInputType.phone,
                       maxLength: 11,
                       inputFormatters: [FilteringTextInputFormatter.digitsOnly],
+                      onChanged: (value) {
+                        setState(() {});
+                      },
                     ),
                   ],
                 ),
@@ -554,37 +799,50 @@ class _BillingPageState extends State<BillingPage> {
                               children: [
                                 Text("Select Your Products", style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: Colors.white)),
                                 SizedBox(height: 10),
-                                Expanded(
-                                  child: SingleChildScrollView(
-                                    scrollDirection: Axis.vertical,
-                                    child: Table(
-                                      border: TableBorder.all(),
-                                      columnWidths: const {
-                                        0: FlexColumnWidth(3),
-                                        1: FlexColumnWidth(1),
-                                        2: FlexColumnWidth(1),
-                                        3: FlexColumnWidth(1),
-                                        4: FlexColumnWidth(1),
-                                        5: FlexColumnWidth(0.5),
-                                      },
+                                Table(
+                                  border: TableBorder.all(),
+                                  columnWidths: const {
+                                    0: FlexColumnWidth(3),
+                                    1: FlexColumnWidth(1),
+                                    2: FlexColumnWidth(1),
+                                    3: FlexColumnWidth(1),
+                                    4: FlexColumnWidth(1),
+                                    5: FlexColumnWidth(0.5),
+                                  },
+                                  children: [
+                                    TableRow(
                                       children: [
-                                        TableRow(
-                                          children: [
-                                            Padding(padding: const EdgeInsets.all(8.0), child: Text('Product', style: TextStyle(fontWeight: FontWeight.bold, color: Colors.white))),
-                                            Padding(padding: const EdgeInsets.all(8.0), child: Text('Price', style: TextStyle(fontWeight: FontWeight.bold, color: Colors.white))),
-                                            Padding(padding: const EdgeInsets.all(8.0), child: Text('Qty', style: TextStyle(fontWeight: FontWeight.bold, color: Colors.white))),
-                                            Padding(padding: const EdgeInsets.all(8.0), child: Text('Total', style: TextStyle(fontWeight: FontWeight.bold, color: Colors.white))),
-                                            Padding(padding: const EdgeInsets.all(8.0), child: Text('Stock', style: TextStyle(fontWeight: FontWeight.bold, color: Colors.white))),
-                                            Padding(padding: const EdgeInsets.all(8.0), child: Text('Edit', style: TextStyle(fontWeight: FontWeight.bold, color: Colors.white))),
-                                          ],
-                                        ),
-                                        ...filteredProducts.asMap().entries.map((entry) {
-                                          final index = entry.key;
-                                          final product = entry.value;
-                                          return TableRow(
+                                        Padding(padding: EdgeInsets.all(8), child: Text('Product', style: TextStyle(fontWeight: FontWeight.bold, color: Colors.white))),
+                                        Padding(padding: EdgeInsets.all(8), child: Text('Price', style: TextStyle(fontWeight: FontWeight.bold, color: Colors.white))),
+                                        Padding(padding: EdgeInsets.all(8), child: Text('Qty', style: TextStyle(fontWeight: FontWeight.bold, color: Colors.white))),
+                                        Padding(padding: EdgeInsets.all(8), child: Text('Total', style: TextStyle(fontWeight: FontWeight.bold, color: Colors.white))),
+                                        Padding(padding: EdgeInsets.all(8), child: Text('Stock', style: TextStyle(fontWeight: FontWeight.bold, color: Colors.white))),
+                                        Padding(padding: EdgeInsets.all(8), child: Text('Edit', style: TextStyle(fontWeight: FontWeight.bold, color: Colors.white))),
+                                      ],
+                                    ),
+                                  ],
+                                ),
+                                Expanded(
+                                  child: ListView.builder(
+                                    shrinkWrap: true,
+                                    itemCount: filteredProducts.length,
+                                    itemBuilder: (context, index) {
+                                      final product = filteredProducts[index];
+                                      return Table(
+                                        border: TableBorder.all(),
+                                        columnWidths: const {
+                                          0: FlexColumnWidth(3),
+                                          1: FlexColumnWidth(1),
+                                          2: FlexColumnWidth(1),
+                                          3: FlexColumnWidth(1),
+                                          4: FlexColumnWidth(1),
+                                          5: FlexColumnWidth(0.5),
+                                        },
+                                        children: [
+                                          TableRow(
                                             children: [
                                               Padding(
-                                                padding: const EdgeInsets.all(8.0),
+                                                padding: EdgeInsets.all(8),
                                                 child: Column(
                                                   crossAxisAlignment: CrossAxisAlignment.start,
                                                   children: [
@@ -593,15 +851,17 @@ class _BillingPageState extends State<BillingPage> {
                                                   ],
                                                 ),
                                               ),
-                                              Padding(padding: const EdgeInsets.all(8.0), child: Text(product.price.toStringAsFixed(2), style: TextStyle(color: Colors.white))),
+                                              Padding(padding: EdgeInsets.all(8), child: Text(product.price.toStringAsFixed(2), style: TextStyle(color: Colors.white))),
                                               Padding(
-                                                padding: const EdgeInsets.all(8.0),
+                                                padding: EdgeInsets.all(8),
                                                 child: Row(
                                                   mainAxisAlignment: MainAxisAlignment.center,
                                                   children: [
                                                     IconButton(
                                                       icon: Icon(Icons.remove, color: Colors.white),
-                                                      onPressed: () => handleQuantityChange(index, product.quantity - 1),
+                                                      onPressed: product.quantity > 0
+                                                          ? () => handleQuantityChange(index, product.quantity - 1)
+                                                          : null,
                                                     ),
                                                     Text(product.quantity.toString(), style: TextStyle(color: Colors.white)),
                                                     IconButton(
@@ -611,10 +871,10 @@ class _BillingPageState extends State<BillingPage> {
                                                   ],
                                                 ),
                                               ),
-                                              Padding(padding: const EdgeInsets.all(8.0), child: Text((product.price * product.quantity).toStringAsFixed(2), style: TextStyle(color: Colors.white))),
-                                              Padding(padding: const EdgeInsets.all(8.0), child: Text(product.stock.toString(), style: TextStyle(color: Colors.white))),
+                                              Padding(padding: EdgeInsets.all(8), child: Text((product.price * product.quantity).toStringAsFixed(2), style: TextStyle(color: Colors.white))),
+                                              Padding(padding: EdgeInsets.all(8), child: Text(product.stock.toString(), style: TextStyle(color: Colors.white))),
                                               Padding(
-                                                padding: const EdgeInsets.all(8.0),
+                                                padding: EdgeInsets.all(8),
                                                 child: PopupMenuButton(
                                                   itemBuilder: (context) => [
                                                     PopupMenuItem(child: Text('Edit'), value: 'edit'),
@@ -631,10 +891,10 @@ class _BillingPageState extends State<BillingPage> {
                                                 ),
                                               ),
                                             ],
-                                          );
-                                        }).toList(),
-                                      ],
-                                    ),
+                                          ),
+                                        ],
+                                      );
+                                    },
                                   ),
                                 ),
                               ],
