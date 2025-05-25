@@ -798,7 +798,32 @@ Total: ${total.toStringAsFixed(2)} BDT
               Text("- Export to Excel/PDF"),
               Text("- Direct printing support"),
               SizedBox(height: 10),
-              Text("Developed for small businesses", style: TextStyle(fontStyle: FontStyle.italic)),
+              const Text("Support:", style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
+              const SizedBox(height: 5),
+
+              GestureDetector(
+                onTap: () => _launchUrl("https://www.facebook.com/BillLagbe"),
+                child: const Text("Facebook", style: TextStyle(color: Colors.blue)),
+              ),
+              const SizedBox(height: 5),
+
+              GestureDetector(
+                onTap: () => _launchUrl("https://www.linkedin.com/in/md-rafsan-zani-b03b72357/"),
+                child: const Text("LinkedIn", style: TextStyle(color: Colors.blue)),
+              ),
+              const SizedBox(height: 5),
+
+              GestureDetector(
+                onTap: () => _launchUrl("https://web.whatsapp.com/"),
+                child: const Text("WhatsApp: +8801308078535", style: TextStyle(color: Colors.green)),
+              ),
+              const SizedBox(height: 5),
+
+              GestureDetector(
+                onTap: () => _launchUrl("https://mail.google.com/mail/u/0/#inbox"),
+                child: const Text("Email: rafsanzanirizon539@gmail.com.com", style: TextStyle(color: Colors.red)),
+
+              ),
             ],
           ),
         ),
@@ -881,11 +906,40 @@ Total: ${total.toStringAsFixed(2)} BDT
     );
   }
 
+  Future<void> _launchUrl(String url) async {
+    if (await canLaunchUrl(Uri.parse(url))) {
+      await launchUrl(
+        Uri.parse(url),
+        mode: LaunchMode.externalApplication,
+      );
+    } else {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Could not launch $url')),
+      );
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(
-        title: Text("Bill Lagbe", style: TextStyle(fontWeight: FontWeight.bold,fontStyle: FontStyle.italic,)),
+      appBar:AppBar(
+        title: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Image.asset(
+              'assets/images/billlagbe.png.png',
+              height: 100,
+            ),
+            // SizedBox(width: 10),
+            // Text(
+            //   "Bill Lagbe",
+            //   style: TextStyle(
+            //     fontWeight: FontWeight.bold,
+            //     fontStyle: FontStyle.italic,
+            //   ),
+            // ),
+          ],
+        ),
         actions: [
           IconButton(icon: Icon(Icons.history), onPressed: showBillHistory),
           IconButton(icon: Icon(Icons.inventory), onPressed: showProductHistory),
