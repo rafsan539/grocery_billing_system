@@ -3,14 +3,14 @@
 
 #define MyAppName "Bill Lagbe"
 #define MyAppVersion "1.5"
-#define MyAppPublisher "My Company, Inc."
+#define MyAppPublisher "Rafsan, Inc."
 #define MyAppURL "https://www.example.com/"
 #define MyAppExeName "grocery_billing_system.exe"
 
 [Setup]
 ; NOTE: The value of AppId uniquely identifies this application. Do not use the same AppId value in installers for other applications.
 ; (To generate a new GUID, click Tools | Generate GUID inside the IDE.)
-AppId={{6410D986-D398-4E58-9775-26C3D94A5DF9}
+AppId={{4DF29E9D-560B-45B2-9299-665513E7BDA8}
 AppName={#MyAppName}
 AppVersion={#MyAppVersion}
 ;AppVerName={#MyAppName} {#MyAppVersion}
@@ -33,7 +33,7 @@ DisableProgramGroupPage=yes
 ;PrivilegesRequired=lowest
 OutputDir=C:\Users\rafsa\StudioProjects\grocery_billing_system\installers
 OutputBaseFilename=Bill Lagbe
-SetupIconFile=C:\Users\rafsa\Downloads\billlagbe.ico
+SetupIconFile=C:\Users\rafsa\Downloads\bill.ico
 SolidCompression=yes
 WizardStyle=modern
 
@@ -47,6 +47,7 @@ Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{
 Source: "C:\Users\rafsa\StudioProjects\grocery_billing_system\build\windows\x64\runner\Release\{#MyAppExeName}"; DestDir: "{app}"; Flags: ignoreversion
 Source: "C:\Users\rafsa\StudioProjects\grocery_billing_system\build\windows\x64\runner\Release\flutter_windows.dll"; DestDir: "{app}"; Flags: ignoreversion
 Source: "C:\Users\rafsa\StudioProjects\grocery_billing_system\build\windows\x64\runner\Release\pdfium.dll"; DestDir: "{app}"; Flags: ignoreversion
+Source: "C:\Users\rafsa\StudioProjects\grocery_billing_system\build\windows\x64\runner\Release\permission_handler_windows_plugin.dll"; DestDir: "{app}"; Flags: ignoreversion
 Source: "C:\Users\rafsa\StudioProjects\grocery_billing_system\build\windows\x64\runner\Release\printing_plugin.dll"; DestDir: "{app}"; Flags: ignoreversion
 Source: "C:\Users\rafsa\StudioProjects\grocery_billing_system\build\windows\x64\runner\Release\url_launcher_windows_plugin.dll"; DestDir: "{app}"; Flags: ignoreversion
 Source: "C:\Users\rafsa\StudioProjects\grocery_billing_system\build\windows\x64\runner\Release\window_size_plugin.dll"; DestDir: "{app}"; Flags: ignoreversion
