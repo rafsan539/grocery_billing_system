@@ -9,6 +9,7 @@ import 'package:pdf/pdf.dart' show PdfPageFormat;
 import 'package:pdf/widgets.dart' as pw;
 import 'package:excel/excel.dart' as ex;
 import 'package:url_launcher/url_launcher.dart';
+import 'package:qr_flutter/qr_flutter.dart';
 
 class Product {
   String name;
@@ -46,6 +47,42 @@ class Product {
   }
 }
 
+class ProductHistory {
+  final DateTime timestamp;
+  final String action; // 'add', 'edit', 'delete'
+  final Product? oldProduct;
+  final Product? newProduct;
+  final String changedBy;
+
+  ProductHistory({
+    required this.timestamp,
+    required this.action,
+    this.oldProduct,
+    this.newProduct,
+    this.changedBy = 'system',
+  });
+
+  Map<String, dynamic> toMap() {
+    return {
+      'timestamp': timestamp.toIso8601String(),
+      'action': action,
+      'oldProduct': oldProduct?.toMap(),
+      'newProduct': newProduct?.toMap(),
+      'changedBy': changedBy,
+    };
+  }
+
+  factory ProductHistory.fromMap(Map<String, dynamic> map) {
+    return ProductHistory(
+      timestamp: DateTime.parse(map['timestamp']),
+      action: map['action'],
+      oldProduct: map['oldProduct'] != null ? Product.fromMap(map['oldProduct']) : null,
+      newProduct: map['newProduct'] != null ? Product.fromMap(map['newProduct']) : null,
+      changedBy: map['changedBy'],
+    );
+  }
+}
+
 class BillRecord {
   final String billNo;
   final String customerName;
@@ -53,6 +90,7 @@ class BillRecord {
   final double total;
   final DateTime date;
   final String billText;
+  final String qrData;
 
   BillRecord({
     required this.billNo,
@@ -61,6 +99,7 @@ class BillRecord {
     required this.total,
     required this.date,
     required this.billText,
+    required this.qrData,
   });
 
   Map<String, dynamic> toMap() {
@@ -71,6 +110,7 @@ class BillRecord {
       'total': total,
       'date': date.toIso8601String(),
       'billText': billText,
+      'qrData': qrData,
     };
   }
 
@@ -82,6 +122,7 @@ class BillRecord {
       total: map['total'],
       date: DateTime.parse(map['date']),
       billText: map['billText'],
+      qrData: map['qrData'] ?? '',
     );
   }
 }
@@ -121,24 +162,19 @@ class _BillingPageState extends State<BillingPage> {
     Product(name: 'Pasta', description: 'Siq Bag', price: 200.0, stock: 80),
   ];
 
-  List<Product> get filteredProducts {
-    if (searchQuery.isEmpty) return products;
-    return products.where((product) {
-      return product.name.toLowerCase().contains(searchQuery.toLowerCase()) ||
-          product.description.toLowerCase().contains(searchQuery.toLowerCase());
-    }).toList();
-  }
+  List<ProductHistory> productHistory = [];
+  List<BillRecord> billHistory = [];
+  int billNumber = 1;
 
   String billText = '';
   double total = 0;
   int? editingIndex;
-  List<BillRecord> billHistory = [];
-  int billNumber = 1;
 
   @override
   void initState() {
     super.initState();
     loadBillHistory();
+    loadProductHistory();
     searchCtrl.addListener(() {
       setState(() {
         searchQuery = searchCtrl.text;
@@ -173,6 +209,54 @@ class _BillingPageState extends State<BillingPage> {
     } catch (e) {
       print("Error loading history: $e");
     }
+  }
+
+  Future<void> loadProductHistory() async {
+    try {
+      final dir = await getApplicationDocumentsDirectory();
+      final historyFile = File('${dir.path}/product_history.json');
+      if (await historyFile.exists()) {
+        final historyData = jsonDecode(await historyFile.readAsString());
+        setState(() {
+          productHistory = (historyData as List)
+              .map((item) => ProductHistory.fromMap(item))
+              .toList();
+        });
+      }
+    } catch (e) {
+      print("Error loading product history: $e");
+    }
+  }
+
+  Future<void> saveProductHistory() async {
+    final dir = await getApplicationDocumentsDirectory();
+    final historyFile = File('${dir.path}/product_history.json');
+    final historyData = productHistory.map((history) => history.toMap()).toList();
+    await historyFile.writeAsString(jsonEncode(historyData));
+  }
+
+  void addToProductHistory({
+    required String action,
+    Product? oldProduct,
+    Product? newProduct,
+  }) {
+    setState(() {
+      productHistory.insert(0, ProductHistory(
+        timestamp: DateTime.now(),
+        action: action,
+        oldProduct: oldProduct,
+        newProduct: newProduct,
+      ));
+    });
+    saveProductHistory();
+  }
+
+  List<Product> get filteredProducts {
+    if (searchQuery.isEmpty) return products;
+    return products.where((product) {
+      return product.name.toLowerCase().contains(searchQuery.toLowerCase()) ||
+          product.description.toLowerCase().contains(searchQuery.toLowerCase());
+    }).toList();
   }
 
   void handleQuantityChange(int index, int newQty) {
@@ -246,6 +330,13 @@ class _BillingPageState extends State<BillingPage> {
     buffer.writeln("============================");
     buffer.writeln("        THANK YOU, COME AGAIN!       ");
     buffer.writeln("============================");
+    String qrData = '''
+Bill No: $currentBillNo
+Customer: ${nameCtrl.text}
+Phone: ${phoneCtrl.text}
+Date: ${DateTime.now().toString().substring(0, 16)}
+Total: ${total.toStringAsFixed(2)} BDT
+''';
 
     setState(() {
       billText = buffer.toString();
@@ -256,6 +347,7 @@ class _BillingPageState extends State<BillingPage> {
         total: total,
         date: DateTime.now(),
         billText: billText,
+        qrData: qrData,
       ));
       billNumber++;
       if (billNumber > 1000) billNumber = 1;
@@ -370,6 +462,52 @@ class _BillingPageState extends State<BillingPage> {
     }
   }
 
+  Future<void> exportProductHistoryToExcel() async {
+    try {
+      final excel = ex.Excel.createExcel();
+      final sheet = excel['Product History'];
+
+      sheet.appendRow([
+        'Timestamp',
+        'Action',
+        'Product Name',
+        'Old Price',
+        'New Price',
+        'Old Stock',
+        'New Stock',
+        'Changed By'
+      ]);
+
+      for (final history in productHistory) {
+        sheet.appendRow([
+          history.timestamp.toString().substring(0, 16),
+          history.action,
+          history.action == 'add' ? history.newProduct?.name :
+          history.action == 'delete' ? history.oldProduct?.name :
+          history.newProduct?.name,
+          history.oldProduct?.price.toStringAsFixed(2),
+          history.newProduct?.price.toStringAsFixed(2),
+          history.oldProduct?.stock.toString(),
+          history.newProduct?.stock.toString(),
+          history.changedBy,
+        ]);
+      }
+
+      final dir = await getApplicationDocumentsDirectory();
+      final filePath = '${dir.path}/product_history_${DateTime.now().millisecondsSinceEpoch}.xlsx';
+      final file = File(filePath);
+      await file.writeAsBytes(excel.encode()!);
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Exported to Excel: $filePath')),
+      );
+    } catch (e) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Error exporting to Excel: $e')),
+      );
+    }
+  }
+
   void showAddEditProductDialog() {
     if (editingIndex != null) {
       productNameCtrl.text = products[editingIndex!].name;
@@ -419,20 +557,32 @@ class _BillingPageState extends State<BillingPage> {
                   productStockCtrl.text.isNotEmpty) {
                 setState(() {
                   if (editingIndex != null) {
-                    products[editingIndex!] = Product(
+                    final oldProduct = products[editingIndex!];
+                    final updatedProduct = Product(
                       name: productNameCtrl.text,
                       description: productDescCtrl.text,
                       price: double.parse(productPriceCtrl.text),
-                      quantity: products[editingIndex!].quantity,
+                      quantity: oldProduct.quantity,
                       stock: int.parse(productStockCtrl.text),
                     );
+                    addToProductHistory(
+                      action: 'edit',
+                      oldProduct: oldProduct,
+                      newProduct: updatedProduct,
+                    );
+                    products[editingIndex!] = updatedProduct;
                   } else {
-                    products.add(Product(
+                    final newProduct = Product(
                       name: productNameCtrl.text,
                       description: productDescCtrl.text,
                       price: double.parse(productPriceCtrl.text),
                       stock: int.parse(productStockCtrl.text),
-                    ));
+                    );
+                    addToProductHistory(
+                      action: 'add',
+                      newProduct: newProduct,
+                    );
+                    products.add(newProduct);
                   }
                   editingIndex = null;
                 });
@@ -447,6 +597,11 @@ class _BillingPageState extends State<BillingPage> {
   }
 
   void deleteProduct(int index) {
+    final deletedProduct = products[index];
+    addToProductHistory(
+      action: 'delete',
+      oldProduct: deletedProduct,
+    );
     setState(() {
       products.removeAt(index);
     });
@@ -515,6 +670,74 @@ class _BillingPageState extends State<BillingPage> {
     );
   }
 
+  void showProductHistory() {
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Text("Product Change History"),
+        content: Container(
+          width: double.maxFinite,
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              if (productHistory.isEmpty)
+                Text("No product changes recorded")
+              else
+                Expanded(
+                  child: ListView.builder(
+                    shrinkWrap: true,
+                    itemCount: productHistory.length,
+                    itemBuilder: (context, index) {
+                      final history = productHistory[index];
+                      return Card(
+                        child: ListTile(
+                          title: Text(
+                            "${history.action.toUpperCase()} - ${history.timestamp.toString().substring(0, 16)}",
+                            style: TextStyle(fontWeight: FontWeight.bold),
+                          ),
+                          subtitle: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              if (history.action == 'edit')
+                                Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    Text("Old: ${history.oldProduct?.name} (${history.oldProduct?.price} BDT, Stock: ${history.oldProduct?.stock})"),
+                                    Text("New: ${history.newProduct?.name} (${history.newProduct?.price} BDT, Stock: ${history.newProduct?.stock})"),
+                                  ],
+                                ),
+                              if (history.action == 'add')
+                                Text("Added: ${history.newProduct?.name} (${history.newProduct?.price} BDT, Stock: ${history.newProduct?.stock})"),
+                              if (history.action == 'delete')
+                                Text("Deleted: ${history.oldProduct?.name}"),
+                            ],
+                          ),
+                        ),
+                      );
+                    },
+                  ),
+                ),
+            ],
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: Text("Close"),
+          ),
+          if (productHistory.isNotEmpty)
+            TextButton(
+              onPressed: () {
+                Navigator.pop(context);
+                exportProductHistoryToExcel();
+              },
+              child: Text("Export to Excel"),
+            ),
+        ],
+      ),
+    );
+  }
+
   void showBillDetails(BillRecord bill) {
     showDialog(
       context: context,
@@ -571,6 +794,7 @@ class _BillingPageState extends State<BillingPage> {
               SizedBox(height: 5),
               Text("- Product management (Add/Edit/Delete)"),
               Text("- Bill history tracking"),
+              Text("- Product change history"),
               Text("- Export to Excel/PDF"),
               Text("- Direct printing support"),
               SizedBox(height: 10),
@@ -620,7 +844,8 @@ class _BillingPageState extends State<BillingPage> {
             children: [
               Text("Developed By:", style: TextStyle(fontWeight: FontWeight.bold)),
               SizedBox(height: 10),
-              Text("MD.RAFSAN ZANI"),
+              Text("MD.RAFSAN ZANI",style: TextStyle(fontWeight: FontWeight.bold,color: Colors.white),),
+              Text("(Junior App Developer at Softnextit)",style: TextStyle(fontWeight: FontWeight.w500,fontSize: 12,color: Colors.white),),
               Text("Email: rafsanzanirizon539@gmail.com"),
               Text("Phone: +8801308078535"),
               SizedBox(height: 10),
@@ -639,6 +864,8 @@ class _BillingPageState extends State<BillingPage> {
               Text("Technology Used:", style: TextStyle(fontWeight: FontWeight.bold)),
               Text("Flutter Framework"),
               Text("Dart Programming Language"),
+              Text("Firebase"),
+              Text("Local Database"),
               SizedBox(height: 10),
               Text("All rights reserved © ${DateTime.now().year}"),
             ],
@@ -658,9 +885,10 @@ class _BillingPageState extends State<BillingPage> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: Text("Bill Lagbe", style: TextStyle(fontWeight: FontWeight.bold)),
+        title: Text("Bill Lagbe", style: TextStyle(fontWeight: FontWeight.bold,fontStyle: FontStyle.italic,)),
         actions: [
           IconButton(icon: Icon(Icons.history), onPressed: showBillHistory),
+          IconButton(icon: Icon(Icons.inventory), onPressed: showProductHistory),
           IconButton(
             icon: Icon(Icons.add),
             onPressed: () {
@@ -921,7 +1149,27 @@ class _BillingPageState extends State<BillingPage> {
                         SizedBox(height: 10),
                         Expanded(
                           child: SingleChildScrollView(
-                            child: Text(billText, style: TextStyle(fontFamily: 'Courier', fontSize: 14, color: Colors.white)),
+                            child: Column(
+                              children: [
+                                Text(billText, style: TextStyle(fontFamily: 'Courier', fontSize: 14, color: Colors.white)),
+                                if (billText.isNotEmpty) // Show QR code only when there's a bill
+                                  Column(
+                                    children: [
+                                      SizedBox(height: 20),
+                                      Text("Scan for digital receipt", style: TextStyle(fontWeight: FontWeight.bold, color: Colors.white)),
+                                      SizedBox(height: 10),
+                                      Center(
+                                        child: QrImageView(
+                                          data: billHistory.isNotEmpty ? billHistory.first.qrData : '',
+                                          version: QrVersions.auto,
+                                          size: 120.0,
+                                          backgroundColor: Colors.white,
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                              ],
+                            ),
                           ),
                         ),
                         SizedBox(height: 10),
