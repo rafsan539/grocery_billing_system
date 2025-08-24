@@ -17,6 +17,7 @@ class Product {
   double price;
   int quantity;
   int stock;
+  int tempQuantity;
 
   Product({
     required this.name,
@@ -24,6 +25,7 @@ class Product {
     required this.price,
     this.quantity = 0,
     required this.stock,
+    this.tempQuantity = 0,
   });
 
   Map<String, dynamic> toMap() {
@@ -265,27 +267,22 @@ class _BillingPageState extends State<BillingPage> {
 
     if (newQty < 0) return;
 
-    int diff = newQty - product.quantity;
+    setState(() {
+      products[originalIndex].tempQuantity = newQty;
+      products[originalIndex].quantity = newQty;
+    });
+  }
 
-    if (diff > 0 && product.stock >= diff) {
-      product.stock -= diff;
-      product.quantity = newQty;
-      products[originalIndex] = product;
-    } else if (diff < 0) {
-      product.stock += -diff;
-      product.quantity = newQty;
-      products[originalIndex] = product;
-    } else if (diff > 0 && product.stock < diff) {
+  void generateBill() {
+    bool hasSelectedProducts = products.any((product) => product.tempQuantity > 0);
+
+    if (!hasSelectedProducts) {
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Out of Stock')),
+        SnackBar(content: Text('Please select at least one product')),
       );
       return;
     }
 
-    setState(() {});
-  }
-
-  void generateBill() {
     if (phoneCtrl.text.length != 11 || !phoneCtrl.text.startsWith('01')) {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text('Please enter a valid 11-digit phone number starting with 01')),
@@ -298,6 +295,47 @@ class _BillingPageState extends State<BillingPage> {
         SnackBar(content: Text('Please enter customer name')),
       );
       return;
+    }
+
+    List<Map<String, dynamic>> soldItems = [];
+    for (var product in products) {
+      if (product.tempQuantity > 0) {
+        final oldStock = product.stock;
+        if (product.tempQuantity > oldStock) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text('Not enough stock for ${product.name}')),
+          );
+          return;
+        }
+
+        //product.stock -= product.tempQuantity;
+
+        addToProductHistory(
+          action: 'sale',
+          oldProduct: Product(
+            name: product.name,
+            description: product.description,
+            price: product.price,
+            stock: oldStock,
+            quantity: product.quantity,
+          ),
+          newProduct: Product(
+            name: product.name,
+            description: product.description,
+            price: product.price,
+            stock: product.stock - product.tempQuantity,
+            quantity: product.quantity,
+          ),
+        );
+        product.stock -= product.tempQuantity;
+        soldItems.add({
+          'name': product.name,
+          'description': product.description,
+          'price': product.price,
+          'quantity': product.tempQuantity,
+          'total': product.price * product.tempQuantity,
+        });
+      }
     }
 
     total = 0;
@@ -361,6 +399,7 @@ Total: ${total.toStringAsFixed(2)} BDT
     setState(() {
       for (var product in products) {
         product.quantity = 0;
+        product.tempQuantity = 0;
       }
       billText = '';
       total = 0;
@@ -399,35 +438,148 @@ Total: ${total.toStringAsFixed(2)} BDT
 
     try {
       final excel = ex.Excel.createExcel();
-      final sheet = excel['Bills'];
 
-      sheet.appendRow([
-        'Bill No',
-        'Customer Name',
-        'Phone',
-        'Date',
-        'Total (BDT)',
-        'Bill Details'
-      ]);
-
+      // Create a sheet for each bill
       for (final bill in billHistory) {
+        final sheet = excel['Bill ${bill.billNo}'];
+
+        // Add company header
+        sheet.appendRow(['RAFSAN STORE']);
+        sheet.merge(ex.CellIndex.indexByString("A1"), ex.CellIndex.indexByString("F1"));
+
+        sheet.appendRow(['Address: Your Store Address']);
+        sheet.merge(ex.CellIndex.indexByString("A2"), ex.CellIndex.indexByString("F2"));
+
+        sheet.appendRow(['Phone: +8801308078535 | Email: rafsanzanirizon539@gmail.com']);
+        sheet.merge(ex.CellIndex.indexByString("A3"), ex.CellIndex.indexByString("F3"));
+
+        sheet.appendRow([]); // Empty row
+
+        // Add invoice title
+        sheet.appendRow(['INVOICE']);
+        sheet.merge(ex.CellIndex.indexByString("A4"), ex.CellIndex.indexByString("F4"));
+
+        // Add invoice details
+        sheet.appendRow(['Bill No:', bill.billNo, '', 'Date:', bill.date.toString().substring(0, 10)]);
+        sheet.appendRow(['Customer:', bill.customerName, '', 'Phone:', bill.phone]);
+        sheet.appendRow([]); // Empty row
+
+        // Add table headers
         sheet.appendRow([
-          bill.billNo,
-          bill.customerName,
-          bill.phone,
-          bill.date.toString().substring(0, 16),
-          bill.total.toStringAsFixed(2),
-          bill.billText.replaceAll('\n', ' | ')
+          'SL No',
+          'Product Name',
+          'Description',
+          'Qty',
+          'Unit Price (৳)',
+          'Total (৳)'
         ]);
+
+        // Style header row
+        final headerStyle = ex.CellStyle(
+          bold: true,
+          fontColorHex: "FFFFFF",
+          backgroundColorHex: "000080", // Navy blue
+          horizontalAlign: ex.HorizontalAlign.Center,
+        );
+
+        for (int i = 1; i <= 6; i++) {
+          sheet.cell(ex.CellIndex.indexByString("${String.fromCharCode(64 + i)}${sheet.rows.length}")).cellStyle = headerStyle;
+        }
+
+        // Parse bill items
+        List<String> lines = bill.billText.split('\n');
+        int itemNumber = 1;
+        double calculatedTotal = 0;
+
+        for (int i = 0; i < lines.length; i++) {
+          if (lines[i].contains('Product:')) {
+            String productName = lines[i].replaceFirst('Product:', '').trim();
+            i++;
+
+            if (i < lines.length && lines[i].contains('Qty:')) {
+              String qtyLine = lines[i].trim();
+              List<String> qtyParts = qtyLine.split('x');
+              String qty = qtyParts[0].replaceFirst('Qty:', '').trim();
+              String unitPrice = qtyParts.length > 1 ? qtyParts[1].trim() : '0';
+              i++;
+
+              if (i < lines.length && lines[i].contains('Total:')) {
+                String total = lines[i].trim().replaceFirst('Total:', '').trim();
+
+                // Extract description if available (format: Product Name (Description))
+                String description = '';
+                if (productName.contains('(') && productName.contains(')')) {
+                  int start = productName.indexOf('(');
+                  int end = productName.indexOf(')');
+                  description = productName.substring(start + 1, end);
+                  productName = productName.substring(0, start).trim();
+                }
+
+                // Add to Excel sheet
+                sheet.appendRow([
+                  itemNumber.toString(),
+                  productName,
+                  description,
+                  qty,
+                  unitPrice,
+                  total
+                ]);
+
+                calculatedTotal += double.parse(total);
+                itemNumber++;
+              }
+            }
+          }
+        }
+
+        // Add summary section
+        sheet.appendRow([]);
+        sheet.appendRow(['', '', '', '', 'Subtotal:', calculatedTotal.toStringAsFixed(2)]);
+        sheet.appendRow(['', '', '', '', 'Tax (0%):', '0.00']);
+        sheet.appendRow(['', '', '', '', 'Discount:', '0.00']);
+        sheet.appendRow(['', '', '', '', 'TOTAL:', calculatedTotal.toStringAsFixed(2)]);
+
+        // Style total row
+        final totalStyle = ex.CellStyle(
+          bold: true,
+          fontColorHex: "FF0000", // Red
+          fontSize: 14,
+        );
+
+        sheet.cell(ex.CellIndex.indexByString("E${sheet.rows.length}")).cellStyle = totalStyle;
+        sheet.cell(ex.CellIndex.indexByString("F${sheet.rows.length}")).cellStyle = totalStyle;
+
+        // Add footer
+        sheet.appendRow([]);
+        sheet.appendRow(['Terms & Conditions:']);
+        sheet.appendRow(['1. Goods once sold will not be taken back.']);
+        sheet.appendRow(['2. Please check your items at the time of purchase.']);
+        sheet.appendRow([]);
+        sheet.appendRow(['THANK YOU FOR YOUR BUSINESS!']);
+        sheet.merge(ex.CellIndex.indexByString("A${sheet.rows.length}"), ex.CellIndex.indexByString("F${sheet.rows.length}"));
+
+        // Set column widths
+        sheet.setColWidth(1, 8);  // SL No
+        sheet.setColWidth(2, 30); // Product Name
+        sheet.setColWidth(3, 20); // Description
+        sheet.setColWidth(4, 10); // Qty
+        sheet.setColWidth(5, 15); // Unit Price
+        sheet.setColWidth(6, 15); // Total
       }
 
+      // Save the file
       final dir = await getApplicationDocumentsDirectory();
-      final filePath = '${dir.path}/bill_history_${DateTime.now().millisecondsSinceEpoch}.xlsx';
+      final filePath = '${dir.path}/All_Invoices_${DateTime.now().millisecondsSinceEpoch}.xlsx';
       final file = File(filePath);
       await file.writeAsBytes(excel.encode()!);
 
+      // Open the file after saving (works on Windows)
+      if (defaultTargetPlatform == TargetPlatform.windows) {
+        await Process.run('start', ['excel', filePath], runInShell: true);
+      }
+
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Exported to Excel: $filePath')),
+        SnackBar(content: Text('All invoices exported to Excel')),
       );
     } catch (e) {
       ScaffoldMessenger.of(context).showSnackBar(
@@ -441,19 +593,142 @@ Total: ${total.toStringAsFixed(2)} BDT
       final excel = ex.Excel.createExcel();
       final sheet = excel['Bill ${bill.billNo}'];
 
-      sheet.appendRow(['Bill Details']);
+      // Add company header
+      sheet.appendRow(['RAFSAN STORE']);
+      sheet.merge(ex.CellIndex.indexByString("A1"), ex.CellIndex.indexByString("F1"));
 
-      for (var line in bill.billText.split('\n')) {
-        sheet.appendRow([line]);
+      sheet.appendRow(['Address: Your Store Address']);
+      sheet.merge(ex.CellIndex.indexByString("A2"), ex.CellIndex.indexByString("F2"));
+
+      sheet.appendRow(['Phone: +8801308078535 | Email: rafsanzanirizon539@gmail.com']);
+      sheet.merge(ex.CellIndex.indexByString("A3"), ex.CellIndex.indexByString("F3"));
+
+      sheet.appendRow([]); // Empty row
+
+      // Add invoice title
+      sheet.appendRow(['INVOICE']);
+      sheet.merge(ex.CellIndex.indexByString("A4"), ex.CellIndex.indexByString("F4"));
+
+      // Add invoice details
+      sheet.appendRow(['Bill No:', bill.billNo, '', 'Date:', bill.date.toString().substring(0, 10)]);
+      sheet.appendRow(['Customer:', bill.customerName, '', 'Phone:', bill.phone]);
+      sheet.appendRow([]); // Empty row
+
+      // Add table headers
+      sheet.appendRow([
+        'SL No',
+        'Product Name',
+        'Description',
+        'Qty',
+        'Unit Price (৳)',
+        'Total (৳)'
+      ]);
+
+      // Style header row
+      final headerStyle = ex.CellStyle(
+        bold: true,
+        fontColorHex: "FFFFFF",
+        backgroundColorHex: "000080", // Navy blue
+        horizontalAlign: ex.HorizontalAlign.Center,
+      );
+
+      for (int i = 1; i <= 6; i++) {
+        sheet.cell(ex.CellIndex.indexByString("${String.fromCharCode(64 + i)}${sheet.rows.length}")).cellStyle = headerStyle;
       }
 
+      // Parse bill items
+      List<String> lines = bill.billText.split('\n');
+      int itemNumber = 1;
+      double calculatedTotal = 0;
+
+      for (int i = 0; i < lines.length; i++) {
+        if (lines[i].contains('Product:')) {
+          String productName = lines[i].replaceFirst('Product:', '').trim();
+          i++;
+
+          if (i < lines.length && lines[i].contains('Qty:')) {
+            String qtyLine = lines[i].trim();
+            List<String> qtyParts = qtyLine.split('x');
+            String qty = qtyParts[0].replaceFirst('Qty:', '').trim();
+            String unitPrice = qtyParts.length > 1 ? qtyParts[1].trim() : '0';
+            i++;
+
+            if (i < lines.length && lines[i].contains('Total:')) {
+              String total = lines[i].trim().replaceFirst('Total:', '').trim();
+
+              // Extract description if available (format: Product Name (Description))
+              String description = '';
+              if (productName.contains('(') && productName.contains(')')) {
+                int start = productName.indexOf('(');
+                int end = productName.indexOf(')');
+                description = productName.substring(start + 1, end);
+                productName = productName.substring(0, start).trim();
+              }
+
+              // Add to Excel sheet
+              sheet.appendRow([
+                itemNumber.toString(),
+                productName,
+                description,
+                qty,
+                unitPrice,
+                total
+              ]);
+
+              calculatedTotal += double.parse(total);
+              itemNumber++;
+            }
+          }
+        }
+      }
+
+      // Add summary section
+      sheet.appendRow([]);
+      sheet.appendRow(['', '', '', '', 'Subtotal:', calculatedTotal.toStringAsFixed(2)]);
+      sheet.appendRow(['', '', '', '', 'Tax (0%):', '0.00']);
+      sheet.appendRow(['', '', '', '', 'Discount:', '0.00']);
+      sheet.appendRow(['', '', '', '', 'TOTAL:', calculatedTotal.toStringAsFixed(2)]);
+
+      // Style total row
+      final totalStyle = ex.CellStyle(
+        bold: true,
+        fontColorHex: "FF0000", // Red
+        fontSize: 14,
+      );
+
+      sheet.cell(ex.CellIndex.indexByString("E${sheet.rows.length}")).cellStyle = totalStyle;
+      sheet.cell(ex.CellIndex.indexByString("F${sheet.rows.length}")).cellStyle = totalStyle;
+
+      // Add footer
+      sheet.appendRow([]);
+      sheet.appendRow(['Terms & Conditions:']);
+      sheet.appendRow(['1. Goods once sold will not be taken back.']);
+      sheet.appendRow(['2. Please check your items at the time of purchase.']);
+      sheet.appendRow([]);
+      sheet.appendRow(['THANK YOU FOR YOUR BUSINESS!']);
+      sheet.merge(ex.CellIndex.indexByString("A${sheet.rows.length}"), ex.CellIndex.indexByString("F${sheet.rows.length}"));
+
+      // Set column widths
+      sheet.setColWidth(1, 8);  // SL No
+      sheet.setColWidth(2, 30); // Product Name
+      sheet.setColWidth(3, 20); // Description
+      sheet.setColWidth(4, 10); // Qty
+      sheet.setColWidth(5, 15); // Unit Price
+      sheet.setColWidth(6, 15); // Total
+
+      // Save the file
       final dir = await getApplicationDocumentsDirectory();
-      final filePath = '${dir.path}/bill_${bill.billNo}_${DateTime.now().millisecondsSinceEpoch}.xlsx';
+      final filePath = '${dir.path}/Invoice_${bill.billNo}.xlsx';
       final file = File(filePath);
       await file.writeAsBytes(excel.encode()!);
 
+      // Open the file after saving (works on Windows)
+      if (defaultTargetPlatform == TargetPlatform.windows) {
+        await Process.run('start', ['excel', filePath], runInShell: true);
+      }
+
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Exported to Excel: $filePath')),
+        SnackBar(content: Text('Invoice exported to Excel')),
       );
     } catch (e) {
       ScaffoldMessenger.of(context).showSnackBar(
@@ -769,7 +1044,6 @@ Total: ${total.toStringAsFixed(2)} BDT
       ),
     );
   }
-
   void _showAboutDialog() {
     showDialog(
       context: context,
@@ -821,8 +1095,7 @@ Total: ${total.toStringAsFixed(2)} BDT
 
               GestureDetector(
                 onTap: () => _launchUrl("https://mail.google.com/mail/u/0/#inbox"),
-                child: const Text("Email: rafsanzanirizon539@gmail.com.com", style: TextStyle(color: Colors.red)),
-
+                child: const Text("Email: billlagbe@gmail.com", style: TextStyle(color: Colors.red)),
               ),
             ],
           ),
@@ -859,43 +1132,43 @@ Total: ${total.toStringAsFixed(2)} BDT
 
   void _showDeveloperDialog() {
     showDialog(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: Text("Developer Information"),
-        content: SingleChildScrollView(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text("Developed By:", style: TextStyle(fontWeight: FontWeight.bold)),
-              SizedBox(height: 10),
-              Text("MD.RAFSAN ZANI",style: TextStyle(fontWeight: FontWeight.bold,color: Colors.white),),
-              Text("(Junior App Developer at Softnextit)",style: TextStyle(fontWeight: FontWeight.w500,fontSize: 12,color: Colors.white),),
-              Text("Email: rafsanzanirizon539@gmail.com"),
-              Text("Phone: +8801308078535"),
-              SizedBox(height: 10),
-              Text("Portfolio:", style: TextStyle(fontWeight: FontWeight.bold)),
-              GestureDetector(
-                onTap: _launchPortfolio,
-                child: Text(
-                  'View My Portfolio',
-                  style: TextStyle(
-                    color: Colors.blue,
-                    decoration: TextDecoration.underline,
+        context: context,
+        builder: (context) => AlertDialog(
+            title: Text("Developer Information"),
+            content: SingleChildScrollView(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text("Developed By:", style: TextStyle(fontWeight: FontWeight.bold)),
+                  SizedBox(height: 10),
+                  Text("MD.RAFSAN ZANI",style: TextStyle(fontWeight: FontWeight.bold,color: Colors.white),),
+                  Text("(Junior App Developer at Softnextit)",style: TextStyle(fontWeight: FontWeight.w500,fontSize: 12,color: Colors.white),),
+                  Text("Email: rafsanzanirizon539@gmail.com"),
+                  Text("Phone: +8801308078535"),
+                  SizedBox(height: 10),
+                  Text("Portfolio:", style: TextStyle(fontWeight: FontWeight.bold)),
+                  GestureDetector(
+                    onTap: _launchPortfolio,
+                    child: Text(
+                      'View My Portfolio',
+                      style: TextStyle(
+                        color: Colors.blue,
+                        decoration: TextDecoration.underline,
+                      ),
+                    ),
                   ),
-                ),
+                  SizedBox(height: 10),
+                  Text("Technology Used:", style: TextStyle(fontWeight: FontWeight.bold)),
+                  Text("Flutter Framework"),
+                  Text("Dart Programming Language"),
+                  Text("Firebase"),
+                  Text("Local Database"),
+                  SizedBox(height: 10),
+                  Text("All rights reserved © ${DateTime.now().year}"),
+                ],
               ),
-              SizedBox(height: 10),
-              Text("Technology Used:", style: TextStyle(fontWeight: FontWeight.bold)),
-              Text("Flutter Framework"),
-              Text("Dart Programming Language"),
-              Text("Firebase"),
-              Text("Local Database"),
-              SizedBox(height: 10),
-              Text("All rights reserved © ${DateTime.now().year}"),
-            ],
-          ),
-        ),
+            ),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(context),
